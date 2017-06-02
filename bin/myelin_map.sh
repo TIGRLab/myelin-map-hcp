@@ -1,16 +1,16 @@
-#!/bin/bash
+#!/bin/bash -ex
 
-subject='PRE01_SFD_32010_01'
-hcp='/archive/data/PRELAPSE/pipelines/hcp'
-raw='/archive/data/PRELAPSE/data/nii'
-SUBJECTS_DIR='/archive/data/PRELAPSE/pipelines/freesurfer'
+hcp='/scratch/jviviano/prelapse_hcp'
 assets='/projects/jviviano/code/myelin-map-hcp/assets'
+SUBJECTS_DIR='/archive/data/PRELAPSE/pipelines/freesurfer'
 
 # inputs
-t1_data=${1}
-t2_data=${2}
-fwhm_myelin=${3}
-fwhm_surface=${4}
+t1_data="/archive/data/PRELAPSE/data/nii/PRE01_SFD_32010_01/PRE01_SFD_32010_01_01_T1_03_Sag-T1-BRAVO-256x256x25.5x1.0.nii.gz"
+t2_data="/archive/data/PRELAPSE/data/nii/PRE01_SFD_32010_01/PRE01_SFD_32010_01_01_T2_09_Sag-CUBE-T2-256x256x25.6x1.0.nii.gz"
+subject='PRE01_SFD_32010_01'
+
+fwhm_myelin=8
+fwhm_surface=20
 
 # shortcuts
 t1="${hcp}/${subject}/T1w"
@@ -26,7 +26,7 @@ reference="${assets}/templates/standard_mesh_atlases/Conte69.MyelinMap_BC.164k_f
 # constants
 l_gm_val="3"
 l_wm_val="2"
-r_rm_val="42"
+r_gm_val="42"
 r_wm_val="41"
 high_res_mesh="164" # for fsaverage_LR164k
 low_res_mesh="32"   # for fsaverage_LR32k
@@ -82,7 +82,7 @@ if [ ! -f ${t1}/ribbon.nii.gz ]; then
 
         # add white matter mask to ribbon file
         fslmaths \
-            ${t1_native}/${subject}.${hemi}.ribbon.nii.gz -bin -mul $GreyRibbonValue \
+            ${t1_native}/${subject}.${hemi}.ribbon.nii.gz -bin -mul ${gm_val} \
             ${t1_native}/${subject}.${hemi}.ribbon.nii.gz
         fslmaths \
             ${tmp}/${subject}.${hemi}.white.native.nii.gz -uthr 0 -abs -bin -mul 255 \
@@ -91,7 +91,7 @@ if [ ! -f ${t1}/ribbon.nii.gz ]; then
             ${tmp}/${subject}.${hemi}.white_uthr0.native.nii.gz -bin \
             ${tmp}/${subject}.${hemi}.white_uthr0.native.nii.gz
         fslmaths \
-            ${tmp}/${subject}.${hemi}.white_uthr0.native.nii.gz -mul $WhiteMaskValue \
+            ${tmp}/${subject}.${hemi}.white_uthr0.native.nii.gz -mul ${wm_val} \
             ${tmp}/${subject}.${hemi}.white_mask.native.nii.gz
         fslmaths \
             ${t1_native}/${subject}.${hemi}.ribbon.nii.gz -add \
@@ -238,7 +238,7 @@ if [ ! -f ${t1}/T1_bias.nii.gz ]; then
         -mas ${t1}/brainmask_fs.nii.gz \
         ${tmp}/T1wmulT2w_brain.nii.gz
 
-    mean=$(fslstats T1wmulT2w_brain.nii.gz -M)
+    mean=$(fslstats ${tmp}/T1wmulT2w_brain.nii.gz -M)
     fslmaths \
         ${tmp}/T1wmulT2w_brain.nii.gz \
         -div ${mean} \
@@ -260,8 +260,8 @@ if [ ! -f ${t1}/T1_bias.nii.gz ]; then
         ${tmp}/T1wmulT2w_brain_norm_modulate.nii.gz
 
     # create a mask using a threshold at Mean - 0.5*Stddev, with filling of holes to remove any non-grey/white tissue.
-    std=$(fslstats T1wmulT2w_brain_norm_modulate.nii.gz -S)
-    mean=$(fslstats T1wmulT2w_brain_norm_modulate.nii.gz -M)
+    std=$(fslstats ${tmp}/T1wmulT2w_brain_norm_modulate.nii.gz -S)
+    mean=$(fslstats ${tmp}/T1wmulT2w_brain_norm_modulate.nii.gz -M)
     lower=$(echo "${mean} - (${std} * 0.5)" | bc -l)
 
     fslmaths \
@@ -348,7 +348,7 @@ if [ ! -f ${t1}/myelin_map.nii.gz ]; then
     # divide images
     wb_command -volume-math \
         "clamp((T1w / T2w), 0, 100)" \
-        myelin_map.nii.gz \
+        ${t1}/myelin_map.nii.gz \
         -var T1w ${t1}/T1_to_fs.nii.gz \
         -var T2w ${t1}/T2_to_fs.nii.gz \
         -fixnan 0
@@ -380,7 +380,7 @@ if [ ! -f ${t1}/myelin_map_ribbon.nii.gz ]; then
         -var ribbon ${t1}/ribbon.nii.gz
 
     # set color map
-    wb_command -volume-palette
+    wb_command -volume-palette \
         ${t1}/myelin_map_ribbon.nii.gz \
         MODE_AUTO_SCALE_PERCENTAGE \
         -pos-percent 4 96 \
@@ -417,141 +417,152 @@ for hemi in L R ; do
     sphere="${mni_native}/${subject}.${hemi}.sphere.reg.reg_LR.native.surf.gii"
 
     # make ribbon
-    wb_command -volume-math \
-        "(ribbon > (${ribbon} - 0.01)) * (ribbon < (${ribbon} + 0.01))" \
-        ${tmp}/tmp_ribbon.nii.gz \
-        -var ribbon ${t1}/ribbon.nii.gz
-    wb_command -volume-to-surface-mapping \
-        ${t1}/myelin_map.nii.gz \
-        ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
-        ${mni_native}/${subject}.${hemi}.MyelinMap.native.func.gii \
-        -myelin-style \
-        ${tmp}/tmp_ribbon.nii.gz \
-        ${mni_native}/${subject}.${hemi}.thickness.native.shape.gii \
-        ${myelin_sigma}
+    if [ ! -f ${mni_native}/${subject}.${hemi}.MyelinMap.native.func.gii ]; then
+        wb_command -volume-math \
+            "(ribbon > (${ribbon} - 0.01)) * (ribbon < (${ribbon} + 0.01))" \
+            ${tmp}/tmp_ribbon.nii.gz \
+            -var ribbon ${t1}/ribbon.nii.gz
 
-    rm ${tmp}/tmp_ribbon.nii.gz
+        wb_command -volume-to-surface-mapping \
+            ${t1}/myelin_map.nii.gz \
+            ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
+            ${mni_native}/${subject}.${hemi}.MyelinMap.native.func.gii \
+            -myelin-style \
+            ${tmp}/tmp_ribbon.nii.gz \
+            ${mni_native}/${subject}.${hemi}.thickness.native.shape.gii \
+            ${myelin_sigma}
+
+        rm ${tmp}/tmp_ribbon.nii.gz
+    fi
+
 
     # regress curvature out of thickness from within roi.native ?
-    wb_command -metric-regression \
-        ${mni_native}/${subject}.${hemi}.thickness.native.shape.gii \
-        ${mni_native}/${subject}.${hemi}.corrThickness.native.shape.gii\
-        -roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii \
-        -remove ${mni_native}/${subject}.${hemi}.curvature.native.shape.gii
+    if [ ! -f ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii ]; then
+        wb_command -metric-regression \
+            ${mni_native}/${subject}.${hemi}.thickness.native.shape.gii \
+            ${mni_native}/${subject}.${hemi}.corrThickness.native.shape.gii\
+            -roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii \
+            -remove ${mni_native}/${subject}.${hemi}.curvature.native.shape.gii
 
-    # smooth myelin map
-    wb_command -metric-smoothing \
-        ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
-        ${mni_native}/${subject}.${hemi}.MyelinMap.native.func.gii \
-        ${surface_sigma} \
-        ${mni_native}/${subject}.${hemi}.SmoothedMyelinMap.native.func.gii \
-        -roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
-
-    # downsample reference mesh to fs
-    wb_command -metric-resample \
-        ${mni}/${subject}.${hemi}.RefMyelinMap.${high_res_mesh}k_fs_LR.func.gii \
-        ${mni}/${subject}.${hemi}.sphere.${high_res_mesh}k_fs_LR.surf.gii ${sphere} \
-        ADAP_BARY_AREA \
-        ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii \
-        -area-surfs ${mni}/${subject}.${hemi}.midthickness.${high_res_mesh}k_fs_LR.surf.gii \
-        ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
-        -current-roi ${mni}/${subject}.${hemi}.atlasroi.${high_res_mesh}k_fs_LR.shape.gii
-
-    # dilate, then mask myelin map
-    wb_command -metric-dilate \
-        ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii \
-        ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
-        30 \
-        ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii \
-        -nearest
-
-    wb_command -metric-mask \
-        ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii \
-        ${mni_native}/${subject}.${hemi}.roi.native.shape.gii \
-        ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii
-    
-    for map in MyelinMap RefMyelinMap ; do
-
-        # reduce memory usage by smoothing on downsampled mesh
-        wb_command -metric-resample \
-            ${mni_native}.${subject}.${hemi}.${map}.native.func.gii \
-            ${sphere} \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.sphere.${low_res_mesh}k_fs_LR.surf.gii \
-            ADAP_BARY_AREA \
-            ${tmp}/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.func.gii \
-            -area-surfs ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
-            -current-roi ${mni_native}.${subject}.${hemi}.roi.native.shape.gii
-
+        # smooth myelin map
         wb_command -metric-smoothing \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
-            ${tmp}/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.func.gii \
-            ${correction_sigma} \
-            ${tmp}/${subject}.${hemi}.${map}_s${correction_sigma}.${low_res_mesh}k_fs_LR.func.gii \
-            -roi ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.atlasroi.${low_res_mesh}k_fs_LR.shape.gii
-
-        wb_command -metric-resample \
-            ${tmp}/${subject}.${hemi}.${map}_s${correction_sigma}.${low_res_mesh}k_fs_LR.func.gii \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.sphere.${low_res_mesh}k_fs_LR.surf.gii \
-            ${sphere} \
-            ADAP_BARY_AREA \
-            ${mni_native}.${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii \
-            -area-surfs ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
             ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
-            -current-roi ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.atlasroi.${low_res_mesh}k_fs_LR.shape.gii
+            ${mni_native}/${subject}.${hemi}.MyelinMap.native.func.gii \
+            ${surface_sigma} \
+            ${mni_native}/${subject}.${hemi}.SmoothedMyelinMap.native.func.gii \
+            -roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
 
+        # downsample reference mesh to fs
+        wb_command -metric-resample \
+            ${mni}/${subject}.${hemi}.RefMyelinMap.${high_res_mesh}k_fs_LR.func.gii \
+            ${mni}/${subject}.${hemi}.sphere.${high_res_mesh}k_fs_LR.surf.gii ${sphere} \
+            ADAP_BARY_AREA \
+            ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii \
+            -area-surfs ${mni}/${subject}.${hemi}.midthickness.${high_res_mesh}k_fs_LR.surf.gii \
+            ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
+            -current-roi ${mni}/${subject}.${hemi}.atlasroi.${high_res_mesh}k_fs_LR.shape.gii
+
+        # dilate, then mask myelin map
         wb_command -metric-dilate \
-            ${mni_native}.${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii \
+            ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii \
             ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
             30 \
-            ${mni_native}.${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii \
+            ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii \
             -nearest
 
         wb_command -metric-mask \
-            ${mni_native}.${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii \
-            ${mni_native}.${subject}.${hemi}.roi.native.shape.gii \
-            ${mni_native}.${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii
+            ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii \
+            ${mni_native}/${subject}.${hemi}.roi.native.shape.gii \
+            ${mni_native}/${subject}.${hemi}.RefMyelinMap.native.func.gii
+    fi
 
-        rm ${tmp}/${subject}.${hemi}.*.func.gii
-    
+    for map in MyelinMap RefMyelinMap ; do
+
+        # reduce memory usage by smoothing on downsampled mesh
+        if [ ! -f ${mni_native}/${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii ]; then
+            wb_command -metric-resample \
+                ${mni_native}/${subject}.${hemi}.${map}.native.func.gii \
+                ${sphere} \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.sphere.${low_res_mesh}k_fs_LR.surf.gii \
+                ADAP_BARY_AREA \
+                ${tmp}/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.func.gii \
+                -area-surfs ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
+                -current-roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
+
+            wb_command -metric-smoothing \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
+                ${tmp}/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.func.gii \
+                ${correction_sigma} \
+                ${tmp}/${subject}.${hemi}.${map}_s${correction_sigma}.${low_res_mesh}k_fs_LR.func.gii \
+                -roi ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.atlasroi.${low_res_mesh}k_fs_LR.shape.gii
+
+            wb_command -metric-resample \
+                ${tmp}/${subject}.${hemi}.${map}_s${correction_sigma}.${low_res_mesh}k_fs_LR.func.gii \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.sphere.${low_res_mesh}k_fs_LR.surf.gii \
+                ${sphere} \
+                ADAP_BARY_AREA \
+                ${mni_native}/${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii \
+                -area-surfs ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
+                ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
+                -current-roi ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.atlasroi.${low_res_mesh}k_fs_LR.shape.gii
+
+            wb_command -metric-dilate \
+                ${mni_native}/${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii \
+                ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
+                30 \
+                ${mni_native}/${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii \
+                -nearest
+
+            wb_command -metric-mask \
+                ${mni_native}/${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii \
+                ${mni_native}/${subject}.${hemi}.roi.native.shape.gii \
+                ${mni_native}/${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii
+            rm ${tmp}/${subject}.${hemi}.*.func.gii
+        fi
     done
 
     # these are both commented out in the original code -- jdv
-    ##wb_command -metric-smoothing ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii ${mni_native}.${hemi}.RefMyelinMap.native.func.gii ${correction_sigma} ${mni_native}.${hemi}.RefMyelinMap_s${correction_sigma}.native.func.gii -roi ${mni_native}.${hemi}.roi.native.shape.gii 
+    ##wb_command -metric-smoothing ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii ${mni_native}/${hemi}.RefMyelinMap.native.func.gii ${correction_sigma} ${mni_native}/${hemi}.RefMyelinMap_s${correction_sigma}.native.func.gii -roi ${mni_native}.${hemi}.roi.native.shape.gii
     #wb_command -metric-smoothing \
     #    ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
     #    ${mni_native}.${subject}${hemi}.MyelinMap.native.func.gii \
     #    ${correction_sigma} \
     #    ${mni_native}.${subject}.${hemi}.MyelinMap_s${correction_sigma}.native.func.gii \
     #    -roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
-    
+
     # compute difference maps
-    wb_command -metric-math \
-        "(Individual - Reference) * Mask" \
-        ${mni_native}/${subject}.${hemi}.BiasField.native.func.gii \
-        -var Individual ${mni_native}/${subject}.${hemi}.MyelinMap_s${correction_sigma}.native.func.gii \
-        -var Reference ${mni_native}/${subject}.${hemi}.RefMyelinMap_s${correction_sigma}.native.func.gii \
-        -var Mask ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
+    if [ ! -f ${mni_native}/${subject}.${hemi}.BiasField.native.func.gii ]; then
+        wb_command -metric-math \
+            "(Individual - Reference) * Mask" \
+            ${mni_native}/${subject}.${hemi}.BiasField.native.func.gii \
+            -var Individual ${mni_native}/${subject}.${hemi}.MyelinMap_s${correction_sigma}.native.func.gii \
+            -var Reference ${mni_native}/${subject}.${hemi}.RefMyelinMap_s${correction_sigma}.native.func.gii \
+            -var Mask ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
+        rm ${mni_native}/${subject}.${hemi}.*_s${correction_sigma}.native.func.gii
+    fi
 
-    wb_command -metric-math \
-        "(Individual - Bias) * Mask" \
-        ${mni_native}/${subject}.${hemi}.MyelinMap_BC.native.func.gii \
-        -var Individual ${mni_native}/${subject}.${hemi}.MyelinMap.native.func.gii \
-        -var Bias ${mni_native}/${subject}.${hemi}.BiasField.native.func.gii \
-        -var Mask ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
+    if [ ! -f ${mni_native}/${subject}.${hemi}.MyelinMap_BC.native.func.gii ]; then
+        wb_command -metric-math \
+            "(Individual - Bias) * Mask" \
+            ${mni_native}/${subject}.${hemi}.MyelinMap_BC.native.func.gii \
+            -var Individual ${mni_native}/${subject}.${hemi}.MyelinMap.native.func.gii \
+            -var Bias ${mni_native}/${subject}.${hemi}.BiasField.native.func.gii \
+            -var Mask ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
+    fi
 
-    wb_command -metric-math \
-        "(Individual - Bias) * Mask" \
-        ${mni_native}/${subject}.${hemi}.SmoothedMyelinMap_BC.native.func.gii \
-        -var Individual ${mni_native}/${subject}.${hemi}.SmoothedMyelinMap.native.func.gii \
-        -var Bias ${mni_native}/${subject}.${hemi}.BiasField.native.func.gii \
-        -var Mask ${mni_native}${subject}.${hemi}.roi.native.shape.gii
+    if [ ! -f ${mni_native}/${subject}.${hemi}.SmoothedMyelinMap_BC.native.func.gii ]; then
+        wb_command -metric-math \
+            "(Individual - Bias) * Mask" \
+            ${mni_native}/${subject}.${hemi}.SmoothedMyelinMap_BC.native.func.gii \
+            -var Individual ${mni_native}/${subject}.${hemi}.SmoothedMyelinMap.native.func.gii \
+            -var Bias ${mni_native}/${subject}.${hemi}.BiasField.native.func.gii \
+            -var Mask ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
+    fi
 
-    rm ${mni_native}/${subject}.${hemi}.*_s${correction_sigma}.native.func.gii 
-
-    for STRING in MyelinMap@func SmoothedMyelinMap@func MyelinMap_BC@func SmoothedMyelinMap_BC@func corrThickness@shape ; do
-        map=`echo $STRING | cut -d "@" -f 1`
-        ext=`echo $STRING | cut -d "@" -f 2`
+    for string in MyelinMap@func SmoothedMyelinMap@func MyelinMap_BC@func SmoothedMyelinMap_BC@func corrThickness@shape ; do
+        map=$(echo ${string} | cut -d "@" -f 1)
+        ext=$(echo ${string} | cut -d "@" -f 2)
 
         wb_command -set-map-name \
             ${mni_native}/${subject}.${hemi}.${map}.native.${ext}.gii 1 ${subject}_${hemi}_${map}
@@ -567,41 +578,49 @@ for hemi in L R ; do
             -disp-zero false
 
         # resample native data to high res mesh, and mask
-        wb_command -metric-resample \
-            ${mni_native}/${subject}.${hemi}.${map}.native.${ext}.gii \
-            ${sphere} \
-            ${mni}/${subject}.${hemi}.sphere.${high_res_mesh}k_fs_LR.surf.gii \
-            ADAP_BARY_AREA \
-            ${mni}/${subject}.${hemi}.${map}.${high_res_mesh}k_fs_LR.${ext}.gii \
-            -area-surfs ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
-            ${mni}/${subject}.${hemi}.midthickness.${high_res_mesh}k_fs_LR.surf.gii \
-            -current-roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
+        if [ ! -f ${mni}/${subject}.${hemi}.sphere.${high_res_mesh}k_fs_LR.surf.gii ]; then
+            wb_command -metric-resample \
+                ${mni_native}/${subject}.${hemi}.${map}.native.${ext}.gii \
+                ${sphere} \
+                ${mni}/${subject}.${hemi}.sphere.${high_res_mesh}k_fs_LR.surf.gii \
+                ADAP_BARY_AREA \
+                ${mni}/${subject}.${hemi}.${map}.${high_res_mesh}k_fs_LR.${ext}.gii \
+                -area-surfs ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
+                ${mni}/${subject}.${hemi}.midthickness.${high_res_mesh}k_fs_LR.surf.gii \
+                -current-roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
 
-        wb_command -metric-mask \
-            ${mni}/${subject}.${hemi}.${map}.${high_res_mesh}k_fs_LR.${ext}.gii \
-            ${mni}/${subject}.${hemi}.atlasroi.${high_res_mesh}k_fs_LR.shape.gii \
-            ${mni}/${subject}.${hemi}.${map}.${high_res_mesh}k_fs_LR.${ext}.gii
+            wb_command -metric-mask \
+                ${mni}/${subject}.${hemi}.${map}.${high_res_mesh}k_fs_LR.${ext}.gii \
+                ${mni}/${subject}.${hemi}.atlasroi.${high_res_mesh}k_fs_LR.shape.gii \
+                ${mni}/${subject}.${hemi}.${map}.${high_res_mesh}k_fs_LR.${ext}.gii
+        fi
 
         # resample native data to low res mesh, and mask
-        wb_command -metric-resample \
-            ${mni_native}/${subject}.${hemi}.${map}.native.${ext}.gii \
-            ${sphere} \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.sphere.${low_res_mesh}k_fs_LR.surf.gii \
-            ADAP_BARY_AREA \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.${ext}.gii \
-            -area-surfs ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
-            -current-roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
+        if [ ! -f ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.sphere.${low_res_mesh}k_fs_LR.surf.gii ]; then
+            wb_command -metric-resample \
+                ${mni_native}/${subject}.${hemi}.${map}.native.${ext}.gii \
+                ${sphere} \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.sphere.${low_res_mesh}k_fs_LR.surf.gii \
+                ADAP_BARY_AREA \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.${ext}.gii \
+                -area-surfs ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
+                -current-roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
 
-        wb_command -metric-mask \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.${ext}.gii \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.atlasroi.${low_res_mesh}k_fs_LR.shape.gii \
-            ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.${ext}.gii
+            wb_command -metric-mask \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.${ext}.gii \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.atlasroi.${low_res_mesh}k_fs_LR.shape.gii \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.${ext}.gii
+        fi
     done
 done
 
 # Create CIFTI Files
-for string in "${mni_native}"@native@roi "${mni}"@"${high_res_mesh}"k_fs_LR@atlasroi "${mni}/fsaverage_LR${low_res_mesh}k@${low_res_mesh}k_fs_LR@atlasroi" ; do
+## TODO !!!
+#  "${mni}@${high_res_mesh}k_fs_LR@atlasroi"   removed from outer loop -- these files are absent?
+#  "${mni}/fsaverage_LR${low_res_mesh}k@${low_res_mesh}k_fs_LR@atlasroi"
+## TODO !!!
+for string in "${mni_native}@native@roi" ; do
     folder=$(echo ${string} | cut -d "@" -f 1)
     mesh=$(echo ${string} | cut -d "@" -f 2)
     roi=$(echo ${string} | cut -d "@" -f 3)
@@ -610,44 +629,51 @@ for string in "${mni_native}"@native@roi "${mni}"@"${high_res_mesh}"k_fs_LR@atla
         map=$(echo ${stringII} | cut -d "@" -f 1)
         ext=$(echo ${stringII} | cut -d "@" -f 2)
 
-        wb_command -cifti-create-dense-scalar \
-            ${folder}/${subject}.${map}.${mesh}.dscalar.nii \
-            -left-metric ${folder}/${subject}.L.${map}.${mesh}.${ext}.gii \
-            -roi-left ${folder}/${subject}.L.${roi}.${mesh}.shape.gii \
-            -right-metric ${folder}/${subject}.R.${map}.${mesh}.${ext}.gii \
-            -roi-right ${folder}/${subject}.R.${roi}.${mesh}.shape.gii
+        if [ ! -f ${folder}/${subject}.${map}.${mesh}.dscalar.nii ]; then
+            wb_command -cifti-create-dense-scalar \
+                ${folder}/${subject}.${map}.${mesh}.dscalar.nii \
+                -left-metric ${folder}/${subject}.L.${map}.${mesh}.${ext}.gii \
+                -roi-left ${folder}/${subject}.L.${roi}.${mesh}.shape.gii \
+                -right-metric ${folder}/${subject}.R.${map}.${mesh}.${ext}.gii \
+                -roi-right ${folder}/${subject}.R.${roi}.${mesh}.shape.gii
 
-        wb_command -set-map-names \
-            ${folder}/${subject}.${map}.${mesh}.dscalar.nii -map 1 "${subject}_${map}"
+            wb_command -set-map-names \
+                ${folder}/${subject}.${map}.${mesh}.dscalar.nii -map 1 "${subject}_${map}"
 
-        wb_command -cifti-palette \
-            ${folder}/${subject}.${map}.${mesh}.dscalar.nii \
-            MODE_AUTO_SCALE_PERCENTAGE \
-            ${folder}/${subject}.${map}.${mesh}.dscalar.nii \
-            -pos-percent 4 96 \
-            -interpolate true \
-            -palette-name videen_style \
-            -disp-pos true \
-            -disp-neg false \
-            -disp-zero false
-  done
+            wb_command -cifti-palette \
+                ${folder}/${subject}.${map}.${mesh}.dscalar.nii \
+                MODE_AUTO_SCALE_PERCENTAGE \
+                ${folder}/${subject}.${map}.${mesh}.dscalar.nii \
+                -pos-percent 4 96 \
+                -interpolate true \
+                -palette-name videen_style \
+                -disp-pos true \
+                -disp-neg false \
+                -disp-zero false
+        fi
+    done
 done
 
-STRINGII=""
-for LowResMesh in ${LowResMeshes} ; do
-  STRINGII=`echo "${STRINGII}${AtlasSpaceFolder}/fsaverage_LR${LowResMesh}k@${AtlasSpaceFolder}/fsaverage_LR${LowResMesh}k@${LowResMesh}k_fs_LR ${T1wFolder}/fsaverage_LR${LowResMesh}k@${AtlasSpaceFolder}/fsaverage_LR${LowResMesh}k@${LowResMesh}k_fs_LR "`
-done
+## TODO !!!
+#  "${mni}@${mni}@${high_res_mesh}k_fs_LR"   removed from outer loop -- these files are absent?
+#  "${mni}/fsaverage_LR${low_res_mesh}k@${mni}/fsaverage_LR${low_res_mesh}k@${low_res_mesh}k_fs_LR"
+#  "${t1}/fsaverage_LR${low_res_mesh}k@${mni}/fsaverage_LR${low_res_mesh}k@${low_res_mesh}k_fs_LR"
+## TODO !!!
+
 
 #Add CIFTI Maps to Spec Files
-for STRING in "$T1wFolder"/"$NativeFolder"@"$AtlasSpaceFolder"/"$NativeFolder"@native "$AtlasSpaceFolder"/"$NativeFolder"@"$AtlasSpaceFolder"/"$NativeFolder"@native "$AtlasSpaceFolder"@"$AtlasSpaceFolder"@"$HighResMesh"k_fs_LR ${STRINGII} ; do
-  FolderI=`echo $STRING | cut -d "@" -f 1`
-  FolderII=`echo $STRING | cut -d "@" -f 2`
-  Mesh=`echo $STRING | cut -d "@" -f 3`
-  for STRINGII in MyelinMap_BC@dscalar SmoothedMyelinMap_BC@dscalar corrThickness@dscalar ; do
-    Map=`echo $STRINGII | cut -d "@" -f 1`
-    Ext=`echo $STRINGII | cut -d "@" -f 2`
-    ${CARET7DIR}/wb_command -add-to-spec-file "$FolderI"/"$Subject"."$Mesh".wb.spec INVALID "$FolderII"/"$Subject"."$Map"."$Mesh"."$Ext".nii
-  done
+for string in "${t1_native}@${mni_native}@native" "${mni_native}@${mni_native}@native" ; do
+    folder=$(echo ${string} | cut -d "@" -f 1)
+    folderII=$(echo ${string} | cut -d "@" -f 2)
+    mesh=$(echo ${string} | cut -d "@" -f 3)
+    for stringII in MyelinMap_BC@dscalar SmoothedMyelinMap_BC@dscalar corrThickness@dscalar ; do
+        map=$(echo ${stringII} | cut -d "@" -f 1)
+        ext=$(echo ${stringII} | cut -d "@" -f 2)
+        wb_command -add-to-spec-file \
+            "${folder}/${subject}.${mesh}.wb.spec" \
+            INVALID \
+            "${folderII}/${subject}.${map}.${mesh}.${ext}.nii"
+    done
 done
 
 
