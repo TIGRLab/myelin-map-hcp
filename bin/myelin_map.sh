@@ -1,13 +1,17 @@
 #!/bin/bash -ex
+#
+# for details see The Minimal Preprocessing Pipelines for the Human Connectome Project Glasser et al.
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3720813/
+#
 
 hcp='/scratch/jviviano/prelapse_hcp'
 assets='/projects/jviviano/code/myelin-map-hcp/assets'
 SUBJECTS_DIR='/archive/data/PRELAPSE/pipelines/freesurfer'
 
 # inputs
-t1_data="/archive/data/PRELAPSE/data/nii/PRE01_SFD_32010_01/PRE01_SFD_32010_01_01_T1_03_Sag-T1-BRAVO-256x256x25.5x1.0.nii.gz"
-t2_data="/archive/data/PRELAPSE/data/nii/PRE01_SFD_32010_01/PRE01_SFD_32010_01_01_T2_09_Sag-CUBE-T2-256x256x25.6x1.0.nii.gz"
-subject='PRE01_SFD_32010_01'
+subject='PRE01_SFD_32016_01'
+t1_data="/archive/data/PRELAPSE/data/nii/${subject}/${subject}_??_T1_*.nii.gz"
+t2_data="/archive/data/PRELAPSE/data/nii/${subject}/${subject}_??_T2_*.nii.gz"
 
 fwhm_myelin=8
 fwhm_surface=20
@@ -485,20 +489,20 @@ for hemi in L R ; do
                 ${sphere} \
                 ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.sphere.${low_res_mesh}k_fs_LR.surf.gii \
                 ADAP_BARY_AREA \
-                ${tmp}/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.func.gii \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.func.gii \
                 -area-surfs ${t1_native}/${subject}.${hemi}.midthickness.native.surf.gii \
                 ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
                 -current-roi ${mni_native}/${subject}.${hemi}.roi.native.shape.gii
 
             wb_command -metric-smoothing \
                 ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.midthickness.${low_res_mesh}k_fs_LR.surf.gii \
-                ${tmp}/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.func.gii \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}.${low_res_mesh}k_fs_LR.func.gii \
                 ${correction_sigma} \
-                ${tmp}/${subject}.${hemi}.${map}_s${correction_sigma}.${low_res_mesh}k_fs_LR.func.gii \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}_s${correction_sigma}.${low_res_mesh}k_fs_LR.func.gii \
                 -roi ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.atlasroi.${low_res_mesh}k_fs_LR.shape.gii
 
             wb_command -metric-resample \
-                ${tmp}/${subject}.${hemi}.${map}_s${correction_sigma}.${low_res_mesh}k_fs_LR.func.gii \
+                ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.${map}_s${correction_sigma}.${low_res_mesh}k_fs_LR.func.gii \
                 ${mni}/fsaverage_LR${low_res_mesh}k/${subject}.${hemi}.sphere.${low_res_mesh}k_fs_LR.surf.gii \
                 ${sphere} \
                 ADAP_BARY_AREA \
@@ -518,7 +522,6 @@ for hemi in L R ; do
                 ${mni_native}/${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii \
                 ${mni_native}/${subject}.${hemi}.roi.native.shape.gii \
                 ${mni_native}/${subject}.${hemi}.${map}_s${correction_sigma}.native.func.gii
-            rm ${tmp}/${subject}.${hemi}.*.func.gii
         fi
     done
 
@@ -656,11 +659,9 @@ done
 
 ## TODO !!!
 #  "${mni}@${mni}@${high_res_mesh}k_fs_LR"   removed from outer loop -- these files are absent?
-#  "${mni}/fsaverage_LR${low_res_mesh}k@${mni}/fsaverage_LR${low_res_mesh}k@${low_res_mesh}k_fs_LR"
 #  "${t1}/fsaverage_LR${low_res_mesh}k@${mni}/fsaverage_LR${low_res_mesh}k@${low_res_mesh}k_fs_LR"
+#  "${mni}/fsaverage_LR${low_res_mesh}k@${mni}/fsaverage_LR${low_res_mesh}k@${low_res_mesh}k_fs_LR"
 ## TODO !!!
-
-
 #Add CIFTI Maps to Spec Files
 for string in "${t1_native}@${mni_native}@native" "${mni_native}@${mni_native}@native" ; do
     folder=$(echo ${string} | cut -d "@" -f 1)
