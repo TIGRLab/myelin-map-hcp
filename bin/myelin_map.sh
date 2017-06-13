@@ -45,6 +45,57 @@ if [ -d "${tmp}" ]; then
 fi
 mkdir -p ${tmp}
 
+# get raw data into freesurfer, then HCP space
+if [ ! -f ${t1}/T2_to_fs.mat ]; then
+    bbregister \
+        --s ${subject} \
+        --mov ${t2_data} \
+        --reg ${t1}/T2_to_fs.dat \
+        --fslmat ${t1}/T2_to_fs.mat \
+        --init-fsl \
+        --t2
+fi
+
+if [ ! -f ${t1}/T1_to_fs.mat ]; then
+    bbregister \
+        --s ${subject} \
+        --mov ${t1_data} \
+        --reg ${t1}/T1_to_fs.dat \
+        --fslmat ${t1}/T1_to_fs.mat \
+        --init-fsl \
+        --t1
+fi
+
+if [ ! -f ${t1}/T2_to_fs.nii.gz ]; then
+    flirt \
+        -in ${t2_data} \
+        -ref ${t1}/T1w.nii.gz \
+        -applyxfm -init ${t1}/T2_to_fs.mat \
+        -interp spline \
+        -out ${t1}/T2_to_fs.nii.gz
+fi
+
+if [ ! -f ${t1}/T1_to_fs.nii.gz ]; then
+    flirt \
+        -in ${t1_data} \
+        -ref ${t1}/T1w.nii.gz \
+        -applyxfm -init ${t1}/T1_to_fs.mat \
+        -interp spline \
+        -out ${t1}/T1_to_fs.nii.gz
+fi
+
+if [ ! -f ${t1}/T1_to_hcp.nii.gz ]; then
+    fslreorient2std ${t1}/T1_to_fs.nii.gz ${t1}/T1_to_hcp.nii.gz
+fi
+
+if [ ! -f ${t1}/T2_to_hcp.nii.gz ]; then
+    fslreorient2std ${t1}/T2_to_fs.nii.gz ${t1}/T2_to_hcp.nii.gz
+fi
+
+if [ ! -f ${t1}/brainmask_hcp.nii.gz ]; then
+    fslreorient2std ${t1}/brainmask_fs.nii.gz ${t1}/brainmask_hcp.nii.gz
+fi
+
 # create native space ribbon
 if [ ! -f ${t1}/ribbon.nii.gz ]; then
     for hemi in L R ; do
@@ -189,57 +240,19 @@ if [ ! -f ${mni}/ribbon.nii.gz ]; then
         ${mni}/ribbon.nii.gz ${fs_labels} ${mni}/ribbon.nii.gz -drop-unused-labels
 fi
 
-if [ ! -f ${t1}/T2_to_fs.mat ]; then
-    bbregister \
-        --s ${subject} \
-        --mov ${t2_data} \
-        --reg ${t1}/T2_to_fs.dat \
-        --fslmat ${t1}/T2_to_fs.mat \
-        --init-fsl \
-        --t2
-fi
-
-if [ ! -f ${t1}/T1_to_fs.mat ]; then
-    bbregister \
-        --s ${subject} \
-        --mov ${t1_data} \
-        --reg ${t1}/T1_to_fs.dat \
-        --fslmat ${t1}/T1_to_fs.mat \
-        --init-fsl \
-        --t1
-fi
-
-if [ ! -f ${t1}/T2_to_fs.nii.gz ]; then
-    flirt \
-        -in ${t2_data} \
-        -ref ${t1}/T1w.nii.gz \
-        -applyxfm -init ${t1}/T2_to_fs.mat \
-        -interp spline \
-        -out ${t1}/T2_to_fs.nii.gz
-fi
-
-if [ ! -f ${t1}/T1_to_fs.nii.gz ]; then
-    flirt \
-        -in ${t1_data} \
-        -ref ${t1}/T1w.nii.gz \
-        -applyxfm -init ${t1}/T1_to_fs.mat \
-        -interp spline \
-        -out ${t1}/T1_to_fs.nii.gz
-fi
-
-# calculate bias field in freesurfer space
+# calculate bias field in hcp space
 if [ ! -f ${t1}/T1_bias.nii.gz ]; then
 
     # calc sqrt(T1w*T2w), mask, and normalise by in-brain mean
     fslmaths \
-        ${t1}/T1_to_fs.nii.gz \
-        -mul ${t1}/T2_to_fs.nii.gz \
+        ${t1}/T1_to_hcp.nii.gz \
+        -mul ${t1}/T2_to_hcp.nii.gz \
         -abs -sqrt ${tmp}/T1wmulT2w.nii.gz \
         -odt float
 
     fslmaths \
         ${tmp}/T1wmulT2w.nii.gz \
-        -mas ${t1}/brainmask_fs.nii.gz \
+        -mas ${t1}/brainmask_hcp.nii.gz \
         ${tmp}/T1wmulT2w_brain.nii.gz
 
     mean=$(fslstats ${tmp}/T1wmulT2w_brain.nii.gz -M)
@@ -287,34 +300,34 @@ if [ ! -f ${t1}/T1_bias.nii.gz ]; then
 fi
 
 # Use bias field output to create corrected images
-if [ ! -f ${t1}/T1_to_fs_corrected_masked.nii.gz ]; then
+if [ ! -f ${t1}/T1_to_hcp_corrected_masked.nii.gz ]; then
     fslmaths \
-        ${t1}/T1_to_fs.nii.gz \
+        ${t1}/T1_to_hcp.nii.gz \
         -div ${t1}/T1_bias.nii.gz \
-        -mas ${t1}/brainmask_fs.nii.gz \
-        ${t1}/T1_to_fs_corrected_masked.nii.gz -odt float
+        -mas ${t1}/brainmask_hcp.nii.gz \
+        ${t1}/T1_to_hcp_corrected_masked.nii.gz -odt float
 fi
 
-if [ ! -f ${t1}/T1_to_fs_corrected.nii.gz ]; then
+if [ ! -f ${t1}/T1_to_hcp_corrected.nii.gz ]; then
     fslmaths \
-        ${t1}/T1_to_fs.nii.gz \
+        ${t1}/T1_to_hcp.nii.gz \
         -div ${t1}/T1_bias.nii.gz \
-        ${t1}/T1_to_fs_corrected.nii.gz -odt float
+        ${t1}/T1_to_hcp_corrected.nii.gz -odt float
 fi
 
-if [ ! -f ${t1}/T2_to_fs_corrected_masked.nii.gz ]; then
+if [ ! -f ${t1}/T2_to_hcp_corrected_masked.nii.gz ]; then
     fslmaths \
-        ${t1}/T2_to_fs.nii.gz \
+        ${t1}/T2_to_hcp.nii.gz \
         -div ${t1}/T1_bias.nii.gz \
-        -mas ${t1}/brainmask_fs.nii.gz \
-        ${t1}/T2_to_fs_corrected_masked.nii.gz -odt float
+        -mas ${t1}/brainmask_hcp.nii.gz \
+        ${t1}/T2_to_hcp_corrected_masked.nii.gz -odt float
 fi
 
-if [ ! -f ${t1}/T2_to_fs_corrected.nii.gz ]; then
+if [ ! -f ${t1}/T2_to_hcp_corrected.nii.gz ]; then
     fslmaths \
-        ${t1}/T2_to_fs.nii.gz \
+        ${t1}/T2_to_hcp.nii.gz \
         -div ${t1}/T1_bias.nii.gz \
-        ${t1}/T2_to_fs_corrected.nii.gz -odt float
+        ${t1}/T2_to_hcp_corrected.nii.gz -odt float
 fi
 
 # warp bias field to various spaces
@@ -353,8 +366,8 @@ if [ ! -f ${t1}/myelin_map.nii.gz ]; then
     wb_command -volume-math \
         "clamp((T1w / T2w), 0, 100)" \
         ${t1}/myelin_map.nii.gz \
-        -var T1w ${t1}/T1_to_fs.nii.gz \
-        -var T2w ${t1}/T2_to_fs.nii.gz \
+        -var T1w ${t1}/T1_to_hcp.nii.gz \
+        -var T2w ${t1}/T2_to_hcp.nii.gz \
         -fixnan 0
 
     # set color-map
@@ -379,8 +392,8 @@ if [ ! -f ${t1}/myelin_map_ribbon.nii.gz ]; then
     wb_command -volume-math \
         "(T1w / T2w) * (((ribbon > (${l_gm_val}-0.01)) * (ribbon < (${l_gm_val}+0.01))) + ((ribbon > (${r_gm_val}-0.01)) * (ribbon < (${r_gm_val}+0.01))))" \
         ${t1}/myelin_map_ribbon.nii.gz \
-        -var T1w ${t1}/T1_to_fs.nii.gz \
-        -var T2w ${t1}/T2_to_fs.nii.gz \
+        -var T1w ${t1}/T1_to_hcp.nii.gz \
+        -var T2w ${t1}/T2_to_hcp.nii.gz \
         -var ribbon ${t1}/ribbon.nii.gz
 
     # set color map
