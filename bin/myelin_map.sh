@@ -9,7 +9,7 @@ assets='/projects/jviviano/code/myelin-map-hcp/assets'
 SUBJECTS_DIR='/archive/data/PRELAPSE/pipelines/freesurfer'
 
 # inputs
-subject='PRE01_SFD_32016_01'
+subject="PRE01_SFD_32002_01"
 t1_data="/archive/data/PRELAPSE/data/nii/${subject}/${subject}_??_T1_*.nii.gz"
 t2_data="/archive/data/PRELAPSE/data/nii/${subject}/${subject}_??_T2_*.nii.gz"
 
@@ -66,10 +66,16 @@ if [ ! -f ${t1}/T1_to_fs.mat ]; then
         --t1
 fi
 
+# get temporary reference T1 from freesurfer
+if [ ! -f ${t1}/freesurfer_ref.nii.gz ]; then
+    mri_convert ${SUBJECTS_DIR}/${subject}/mri/T1.mgz ${t1}/freesurfer_ref.nii.gz
+fi
+
+
 if [ ! -f ${t1}/T2_to_fs.nii.gz ]; then
     flirt \
         -in ${t2_data} \
-        -ref ${t1}/T1w.nii.gz \
+        -ref ${t1}/freesurfer_ref.nii.gz \
         -applyxfm -init ${t1}/T2_to_fs.mat \
         -interp spline \
         -out ${t1}/T2_to_fs.nii.gz
@@ -78,12 +84,13 @@ fi
 if [ ! -f ${t1}/T1_to_fs.nii.gz ]; then
     flirt \
         -in ${t1_data} \
-        -ref ${t1}/T1w.nii.gz \
+        -ref ${t1}/freesurfer_ref.nii.gz \
         -applyxfm -init ${t1}/T1_to_fs.mat \
         -interp spline \
         -out ${t1}/T1_to_fs.nii.gz
 fi
 
+# reorients freesurfer data to HCP data
 if [ ! -f ${t1}/T1_to_hcp.nii.gz ]; then
     fslreorient2std ${t1}/T1_to_fs.nii.gz ${t1}/T1_to_hcp.nii.gz
 fi
@@ -366,8 +373,8 @@ if [ ! -f ${t1}/myelin_map.nii.gz ]; then
     wb_command -volume-math \
         "clamp((T1w / T2w), 0, 100)" \
         ${t1}/myelin_map.nii.gz \
-        -var T1w ${t1}/T1_to_hcp.nii.gz \
-        -var T2w ${t1}/T2_to_hcp.nii.gz \
+        -var T1w ${t1}/T1_to_hcp_corrected_masked.nii.gz \
+        -var T2w ${t1}/T2_to_hcp_corrected_masked.nii.gz \
         -fixnan 0
 
     # set color-map
@@ -392,8 +399,8 @@ if [ ! -f ${t1}/myelin_map_ribbon.nii.gz ]; then
     wb_command -volume-math \
         "(T1w / T2w) * (((ribbon > (${l_gm_val}-0.01)) * (ribbon < (${l_gm_val}+0.01))) + ((ribbon > (${r_gm_val}-0.01)) * (ribbon < (${r_gm_val}+0.01))))" \
         ${t1}/myelin_map_ribbon.nii.gz \
-        -var T1w ${t1}/T1_to_hcp.nii.gz \
-        -var T2w ${t1}/T2_to_hcp.nii.gz \
+        -var T1w ${t1}/T1_to_hcp_corrected_masked.nii.gz \
+        -var T2w ${t1}/T2_to_hcp_corrected_masked.nii.gz \
         -var ribbon ${t1}/ribbon.nii.gz
 
     # set color map
