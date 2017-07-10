@@ -13,8 +13,8 @@ subject="PRE01_SFD_32002_01"
 t1_data="/archive/data/PRELAPSE/data/nii/${subject}/${subject}_??_T1_*.nii.gz"
 t2_data="/archive/data/PRELAPSE/data/nii/${subject}/${subject}_??_T2_*.nii.gz"
 
-fwhm_myelin=8
-fwhm_surface=20
+fwhm_myelin=5
+fwhm_surface=4
 
 # shortcuts
 t1="${hcp}/${subject}/T1w"
@@ -36,7 +36,7 @@ high_res_mesh="164" # for fsaverage_LR164k
 low_res_mesh="32"   # for fsaverage_LR32k
 myelin_sigma=$(echo "${fwhm_myelin} / (2*(sqrt(2*l(2))))" | bc -l)
 surface_sigma=$(echo "${fwhm_surface} / (2*(sqrt(2*l(2))))" | bc -l)
-correction_sigma="5"
+correction_sigma=$(echo "sqrt (200)" | bc -l)
 bias_sigma="5"
 
 # set up working directory
